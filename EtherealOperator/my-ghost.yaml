@@ -1,0 +1,7 @@
+apiVersion: sunday.com/v1
+kind: EtherealPod
+metadata:
+  name: sunday-server-pod
+spec:
+  image: sunday-app:v1
+  ttl: 60
