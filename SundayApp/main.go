@@ -2,9 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/glebarez/go-sqlite"
@@ -19,23 +21,49 @@ type Item struct {
 var db *sql.DB
 
 func main() {
+	// הגדרת לוגר JSON מקצועי (זהה לאופרטור)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	slog.Info("Sunday App is starting", "port", 8080)
+
 	var err error
-	// 1. Create data directory for persistence
 	os.MkdirAll("/data", 0755)
 
-	// 2. Connect to SQLite database
 	db, err = sql.Open("sqlite", "/data/sunday.db")
 	if err != nil {
-		panic(err)
+		slog.Error("Failed to open database", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS items (user TEXT, product TEXT, amount INTEGER)`)
 	if err != nil {
-		panic(err)
+		slog.Error("Failed to create table", "error", err)
+		os.Exit(1)
 	}
 
-	r := gin.Default()
+	// הגדרת Gin במצב Release כדי שלא ידפיס לוגים מיותרים
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+
+	// Middleware ללוגים בפורמט JSON
+	r.Use(func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		query := c.Request.URL.RawQuery
+
+		c.Next()
+
+		slog.Info("HTTP Request",
+			"method", c.Request.Method,
+			"path", path,
+			"query", query,
+			"status", c.Writer.Status(),
+			"duration", time.Since(start).String(),
+			"ip", c.ClientIP(),
+		)
+	})
 
 	r.POST("/write", func(c *gin.Context) {
 		var item Item
@@ -44,35 +72,29 @@ func main() {
 			return
 		}
 
-		// --- Input Validations ---
-		if item.Amount <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than zero"})
-			return
-		}
-		if item.User == "" || item.Product == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and product_name are required"})
+		if item.Amount <= 0 || item.User == "" || item.Product == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input fields"})
 			return
 		}
 
-		// Normalize input to lowercase to handle case-insensitive product names
 		item.User = strings.ToLower(item.User)
 		item.Product = strings.ToLower(item.Product)
 
 		_, err := db.Exec("INSERT INTO items (user, product, amount) VALUES (?, ?, ?)", item.User, item.Product, item.Amount)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("Database write error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "created"})
 	})
 
 	r.GET("/get_product_amount", func(c *gin.Context) {
-		// Normalize query param to lowercase for accurate search
 		productName := strings.ToLower(c.Query("product_name"))
-
 		rows, err := db.Query("SELECT amount FROM items WHERE product = ?", productName)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("Database read error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
 		defer rows.Close()
@@ -93,19 +115,10 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"product": productName, "amount": total})
 	})
 
-	r.DELETE("/delete_product", func(c *gin.Context) {
-		productName := strings.ToLower(c.Query("product_name"))
-		_, err := db.Exec("DELETE FROM items WHERE product = ?", productName)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "deleted"})
-	})
-
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "alive"})
 	})
 
+	slog.Info("Server is ready and listening")
 	r.Run(":8080")
 }

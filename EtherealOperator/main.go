@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"log/slog" // לוגר מובנה בפורמט JSON (סטנדרט תעשייתי)
+	"os"
 	"path/filepath"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/intstr" // Added for Liveness Probe
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -27,29 +28,39 @@ var (
 )
 
 func main() {
-	fmt.Println("👻 Ethereal Operator is starting...")
+	// הגדרת לוגר מקצועי - כל הלוגים יודפסו כ-JSON מוכן לניטור
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 
+	slog.Info("Ghost Operator is starting", "version", "v1.2", "env", "production")
+
+	// הגדרת חיבור לקלאסטר
 	home := homedir.HomeDir()
 	kubeconfig := filepath.Join(home, ".kube", "config")
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		panic(err)
+		slog.Error("Failed to build kubeconfig", "error", err)
+		os.Exit(1)
 	}
 
+	// יצירת קליינטים (Client-Go)
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		panic(err)
+		slog.Error("Failed to create dynamic client", "error", err)
+		os.Exit(1)
 	}
 	k8sClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err)
+		slog.Error("Failed to create k8s client", "error", err)
+		os.Exit(1)
 	}
 
+	// לופ ה-Reconciliation המרכזי
 	for {
 		list, err := dynamicClient.Resource(gvr).Namespace("default").List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
-			fmt.Printf("Error listing: %v\n", err)
-			time.Sleep(5 * time.Second)
+			slog.Error("Error listing custom resources", "error", err)
+			time.Sleep(10 * time.Second)
 			continue
 		}
 
@@ -62,27 +73,39 @@ func main() {
 
 func reconcile(ep unstructured.Unstructured, k8sClient *kubernetes.Clientset, dynClient *dynamic.DynamicClient) {
 	name := ep.GetName()
+	l := slog.With("resource", name) // הוספת הקשר ללוגים
+
 	spec, found, _ := unstructured.NestedMap(ep.Object, "spec")
 	if !found {
+		l.Error("Spec not found in EtherealPod")
 		return
 	}
-	imageName, _ := spec["image"].(string)
 
+	imageName, _ := spec["image"].(string)
 	podName := "real-" + name
-	_, err := k8sClient.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
+
+	// בדיקת מצב הפוד הקיים
+	existingPod, err := k8sClient.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
 
 	if err != nil {
 		if errors.IsNotFound(err) {
-			fmt.Printf("⚠️  Pod %s is missing! Resurrecting...\n", podName)
-
-			// 1. Resurrect the pod
+			l.Warn("Pod is missing! Reconciling state...", "action", "create")
 			createPod(k8sClient, podName, imageName)
-
-			// 2. Update status in CRD
 			updateStatus(dynClient, ep)
-
 		} else {
-			fmt.Printf("Error getting pod: %v\n", err)
+			l.Error("Unexpected error fetching pod", "error", err)
+		}
+		return
+	}
+
+	// --- בדיקת Idempotency: האם הפוד תקין ותואם להגדרות? ---
+	if existingPod.Spec.Containers[0].Image != imageName {
+		l.Info("Pod configuration mismatch detected", "current_image", existingPod.Spec.Containers[0].Image, "desired_image", imageName)
+		
+		// מחיקה לצורך עדכון (בסיבוב הבא הוא ייוצר מחדש)
+		err := k8sClient.CoreV1().Pods("default").Delete(context.TODO(), podName, metav1.DeleteOptions{})
+		if err != nil {
+			l.Error("Failed to delete outdated pod", "error", err)
 		}
 	}
 }
@@ -93,7 +116,7 @@ func createPod(client *kubernetes.Clientset, name string, image string) {
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
-			Labels: map[string]string{"app": "sunday-app"},
+			Labels: map[string]string{"managed-by": "ethereal-operator", "app": "sunday-app"},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -101,7 +124,6 @@ func createPod(client *kubernetes.Clientset, name string, image string) {
 					Name:            "main-container",
 					Image:           image,
 					ImagePullPolicy: corev1.PullNever,
-					// Liveness Probe to detect deadlocks
 					LivenessProbe: &corev1.Probe{
 						ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{
@@ -109,25 +131,20 @@ func createPod(client *kubernetes.Clientset, name string, image string) {
 								Port: intstr.FromInt(8080),
 							},
 						},
-						InitialDelaySeconds: 5,
-						PeriodSeconds:       10,
+						InitialDelaySeconds: 10,
+						PeriodSeconds:       15,
 					},
-					// Mount data directory
 					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "sunday-storage",
-							MountPath: "/data",
-						},
+						{Name: "data-storage", MountPath: "/data"},
 					},
 				},
 			},
-			// Configure HostPath for persistence
 			Volumes: []corev1.Volume{
 				{
-					Name: "sunday-storage",
+					Name: "data-storage",
 					VolumeSource: corev1.VolumeSource{
 						HostPath: &corev1.HostPathVolumeSource{
-							Path: "/tmp/sunday-storage",
+							Path: "/tmp/sunday-data",
 							Type: &hostPathType,
 						},
 					},
@@ -136,36 +153,29 @@ func createPod(client *kubernetes.Clientset, name string, image string) {
 			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
-	client.CoreV1().Pods("default").Create(context.TODO(), newPod, metav1.CreateOptions{})
-	fmt.Printf("✨ Pod resurrected with PERSISTENCE: %s\n", name)
+
+	_, err := client.CoreV1().Pods("default").Create(context.TODO(), newPod, metav1.CreateOptions{})
+	if err != nil {
+		slog.Error("Failed to create pod", "pod", name, "error", err)
+	} else {
+		slog.Info("Successfully created managed pod", "pod", name)
+	}
 }
 
-// updateStatus increments the resurrection counter in the Custom Resource
-// updateStatus handles the logic: 
-// If it's the first run -> Set to 0.
-// If it's a crash -> Increment by 1.
 func updateStatus(client *dynamic.DynamicClient, ep unstructured.Unstructured) {
-    // מנסים לקרוא את הסטטוס הקיים
-    currentRestarts, found, _ := unstructured.NestedInt64(ep.Object, "status", "resurrections")
-    
-    var newRestarts int64
+	res, found, _ := unstructured.NestedInt64(ep.Object, "status", "resurrections")
+	
+	var nextRes int64 = 0
+	if found {
+		nextRes = res + 1
+	}
 
-    if !found {
-        // אם הסטטוס לא קיים בכלל - סימן שזו הפעם הראשונה שהפוד נוצר
-        // אז אנחנו רק מאתחלים ל-0 (ולא מוסיפים 1)
-        newRestarts = 0
-        fmt.Println("🌱 Initializing Pod for the first time (Restarts = 0)")
-    } else {
-     
-        newRestarts = currentRestarts + 1
-        fmt.Printf("🔄 Crash detected! Incrementing restarts to %d\n", newRestarts)
-    }
+	unstructured.SetNestedField(ep.Object, nextRes, "status", "resurrections")
 
-
-    unstructured.SetNestedField(ep.Object, newRestarts, "status", "resurrections")
-
-    _, err := client.Resource(gvr).Namespace("default").UpdateStatus(context.TODO(), &ep, metav1.UpdateOptions{})
-    if err != nil {
-        fmt.Printf("Failed to update status: %v\n", err)
-    }
+	_, err := client.Resource(gvr).Namespace("default").UpdateStatus(context.TODO(), &ep, metav1.UpdateOptions{})
+	if err != nil {
+		slog.Error("Failed to sync resource status", "resource", ep.GetName(), "error", err)
+	} else {
+		slog.Info("Resource status synchronized", "resource", ep.GetName(), "resurrections", nextRes)
+	}
 }
