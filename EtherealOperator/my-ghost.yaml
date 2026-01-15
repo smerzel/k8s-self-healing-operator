@@ -3,5 +3,5 @@ kind: EtherealPod
 metadata:
   name: sunday-server-pod
 spec:
-  image: sunday-app:v1
+  image: sunday-app:v2
   ttl: 60
