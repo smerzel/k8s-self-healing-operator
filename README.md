@@ -56,42 +56,49 @@ docker build -t sunday-app:v2 ./SundayApp
 
 # Build the Operator (Using --no-cache to ensure latest code)
 docker build --no-cache -t ethereal-operator:latest ./EtherealOperator
-2. Deploy CRD & Permissions
+```
+
+#### 2. Deploy CRD & Permissions
 Set up the Custom Resource Definition and Role-Based Access Control (RBAC).
 
-Bash
-
+```bash
 kubectl apply -f EtherealOperator/crd.yaml
 kubectl apply -f EtherealOperator/operator-deployment.yaml
-3. Run the Managed Application
+```
+
+#### 3. Run the Managed Application
 Trigger the operator to create the application pod by applying the Custom Resource.
 
-Bash
-
+```bash
 kubectl apply -f EtherealOperator/my-ghost.yaml
-🧪 Testing the Self-Healing
-Verify Status: Check that both the operator and the app are running.
+```
 
-Bash
+---
 
-kubectl get pods
-You should see two pods with status Running.
+## 🧪 Testing the Self-Healing
 
-Simulate a Disaster: Delete the application pod to test resilience.
+1.  **Verify Status:** Check that both the operator and the app are running.
+    ```bash
+    kubectl get pods
+    ```
+    *You should see two pods with status `Running`.*
 
-Bash
+2.  **Simulate a Disaster:** Delete the application pod to test resilience.
+    ```bash
+    kubectl delete pod real-sunday-server-pod
+    ```
 
-kubectl delete pod real-sunday-server-pod
-Witness the Resurrection: Immediately check the pods again. The Operator will have already created a replacement pod.
+3.  **Witness the Resurrection:** Immediately check the pods again. The Operator will have already created a replacement pod.
+    ```bash
+    kubectl get pods
+    ```
+    *Result: You will see `real-sunday-server-pod` with a fresh `AGE` (e.g., 5s).*
 
-Bash
+---
 
-kubectl get pods
-Result: You will see real-sunday-server-pod with a fresh AGE (e.g., 5s).
+## 📜 Project Structure
 
-📜 Project Structure
-Plaintext
-
+```text
 ├── EtherealOperator/
 │   ├── main.go                 # Operator logic & reconciliation loop
 │   ├── operator-deployment.yaml # K8s Deployment for the Operator
@@ -102,3 +109,4 @@ Plaintext
 │   ├── main.go                 # Backend API (Gin + SQLite)
 │   └── Dockerfile              # Multi-stage build for the App
 └── README.md                   # Documentation
+```
