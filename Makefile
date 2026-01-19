@@ -1,25 +1,21 @@
-.PHONY: build-app build-operator run-app run-operator docker-build
+.PHONY: build-images deploy-operator deploy-resource clean
 
-# פקודות לבנייה (Build)
-build-all:
-	go build -o bin/app ./SundayApp/main.go
-	go build -o bin/operator ./EtherealOperator/main.go
+# 1. בניית האימג'ים של האפליקציה ושל האופרטור
+build-images:
+	docker build -t sunday-app:v1 ./SundayApp
+	docker build -t ethereal-operator:latest ./EtherealOperator
 
-# הרצה מקומית של האפליקציה
-run-app:
-	cd SundayApp && go run main.go
-
-# הרצה מקומית של האופרטור
-run-operator:
-	cd EtherealOperator && go run main.go
-
-# פקודות עזר לקוברנטיס
-deploy-crd:
+# 2. הרמת האופרטור לקלאסטר (כולל ה-CRD)
+deploy-operator: build-images
 	kubectl apply -f EtherealOperator/ethereal_crd.yaml
+	kubectl apply -f EtherealOperator/operator-deployment.yaml
 
+# 3. יצירת הפוד המנוהל (הטריגר לפעולה)
 deploy-resource:
 	kubectl apply -f EtherealOperator/my-ghost.yaml
 
-clean-k8s:
-	kubectl delete -f EtherealOperator/my-ghost.yaml
-	kubectl delete pods -l managed-by=ethereal-operator
+# 4. מחיקה וניקוי
+clean:
+	kubectl delete -f EtherealOperator/my-ghost.yaml --ignore-not-found
+	kubectl delete -f EtherealOperator/operator-deployment.yaml --ignore-not-found
+	kubectl delete -f EtherealOperator/ethereal_crd.yaml --ignore-not-found
