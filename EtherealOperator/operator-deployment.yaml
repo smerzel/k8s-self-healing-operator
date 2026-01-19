@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ethereal-operator-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ethereal-operator-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["sunday.com"]
+    resources: ["etherealpods", "etherealpods/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ethereal-operator-binding
+subjects:
+  - kind: ServiceAccount
+    name: ethereal-operator-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: ethereal-operator-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ethereal-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: ethereal-operator
+  template:
+    metadata:
+      labels:
+        name: ethereal-operator
+    spec:
+      serviceAccountName: ethereal-operator-sa
+      containers:
+        - name: operator
+          image: ethereal-operator:latest
+          imagePullPolicy: Never

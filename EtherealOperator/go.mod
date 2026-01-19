@@ -1,6 +1,6 @@
 module ethereal-operator
 
-go 1.25.5
+go 1.21
 
 require (
 	k8s.io/api v0.29.0
