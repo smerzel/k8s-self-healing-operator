@@ -77,7 +77,7 @@ func main() {
 		}
 
 		for _, item := range list.Items {
-			reconcile(item, k8sClient)
+			reconcile(context.TODO(), item, k8sClient)
 		}
 
 		time.Sleep(5 * time.Second)
@@ -85,29 +85,36 @@ func main() {
 }
 
 // reconcile מקבלת כעת רק 2 פרמטרים
-func reconcile(item unstructured.Unstructured, client *kubernetes.Clientset) {
-	name := item.GetName()
-	
-	spec, found, _ := unstructured.NestedMap(item.Object, "spec")
-	if !found {
-		return
-	}
-	image, _, _ := unstructured.NestedString(spec, "image")
-	if image == "" {
-		image = "sunday-app:v1"
-	}
+// reconcile בודקת את המצב הקיים מול המצב הרצוי עבור אובייקט ספציפי
+func reconcile(ctx context.Context, item unstructured.Unstructured, client *kubernetes.Clientset) {
+    name := item.GetName()
+    
+    // שליפת ה-Spec מתוך ה-Custom Resource הדינמי
+    spec, found, err := unstructured.NestedMap(item.Object, "spec")
+    if !found || err != nil {
+        slog.Warn("Could not find spec in resource", "name", name)
+        return
+    }
 
-	podName := "real-" + name
+    // הגדרת ברירת מחדל לאימג' אם לא צוין ב-CR
+    image, _, _ := unstructured.NestedString(spec, "image")
+    if image == "" {
+        image = "sunday-app:v2" 
+    }
 
-	_, err := client.CoreV1().Pods("default").Get(context.TODO(), podName, metav1.GetOptions{})
+    podName := "real-" + name
 
-	if err != nil {
-		slog.Info("Pod missing, resurrecting...", "pod", podName)
-		createPod(client, podName, image)
-	}
+    // במקום context.TODO, אנחנו משתמשים ב-ctx שעובר מה-main
+    _, err = client.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
+
+    if err != nil {
+        // אם השגיאה היא שהפוד לא נמצא - זה הזמן להקים אותו (Self-healing)
+        slog.Info("Pod missing, resurrecting...", "pod", podName)
+        createPod(ctx, client, podName, image)
+    }
 }
 
-func createPod(client *kubernetes.Clientset, name string, image string) {
+func createPod(ctx context.Context, client *kubernetes.Clientset, name string, image string) {
 	newPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
@@ -135,7 +142,7 @@ func createPod(client *kubernetes.Clientset, name string, image string) {
 		},
 	}
 
-	_, err := client.CoreV1().Pods("default").Create(context.TODO(), newPod, metav1.CreateOptions{})
+	_, err := client.CoreV1().Pods("default").Create(ctx, newPod, metav1.CreateOptions{})
 	if err != nil {
 		slog.Error("Failed to resurrect pod", "pod", name, "error", err)
 	} else {
