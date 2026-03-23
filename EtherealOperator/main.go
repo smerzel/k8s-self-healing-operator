@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"  // הנה ה-Import שהיה חסר לך!
+	"k8s.io/client-go/rest" 
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
@@ -34,7 +34,6 @@ func main() {
 	var config *rest.Config
 	var err error
 
-	// בדיקה האם רצים בתוך הקלאסטר או לוקאלית
 	config, err = rest.InClusterConfig()
 	if err != nil {
 		slog.Info("Running outside of cluster, trying local kubeconfig")
@@ -84,19 +83,16 @@ func main() {
 	}
 }
 
-// reconcile מקבלת כעת רק 2 פרמטרים
-// reconcile בודקת את המצב הקיים מול המצב הרצוי עבור אובייקט ספציפי
 func reconcile(ctx context.Context, item unstructured.Unstructured, client *kubernetes.Clientset) {
     name := item.GetName()
     
-    // שליפת ה-Spec מתוך ה-Custom Resource הדינמי
+  
     spec, found, err := unstructured.NestedMap(item.Object, "spec")
     if !found || err != nil {
         slog.Warn("Could not find spec in resource", "name", name)
         return
     }
 
-    // הגדרת ברירת מחדל לאימג' אם לא צוין ב-CR
     image, _, _ := unstructured.NestedString(spec, "image")
     if image == "" {
         image = "sunday-app:v2" 
@@ -104,7 +100,7 @@ func reconcile(ctx context.Context, item unstructured.Unstructured, client *kube
 
     podName := "real-" + name
 
-    // במקום context.TODO, אנחנו משתמשים ב-ctx שעובר מה-main
+    
     _, err = client.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
 
     if err != nil {
