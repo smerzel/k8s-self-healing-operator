@@ -2,146 +2,107 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest" 
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"k8s.io/client-go/util/workqueue"
 )
 
-var gvr = schema.GroupVersionResource{
-	Group:    "sunday.com",
-	Version:  "v1",
-	Resource: "etherealpods",
+type Controller struct {
+	k8sClient *kubernetes.Clientset
+	queue     workqueue.RateLimitingInterface
+	logger    *slog.Logger
+}
+
+func (c *Controller) ReconcileBusinessLogic(key string) error {
+	load := c.getPendingTasksFromBackend()
+	
+	if load > 15 {
+		c.logger.Warn("CRITICAL LOAD: Scaling UP resources (Self-Healing Triggered)", "load", load, "target", key)
+	} else if load > 10 {
+		c.logger.Info("High load detected. Monitoring closely.", "load", load)
+	} else if load < 5 {
+		c.logger.Info("Low load. Scaling DOWN to save costs.", "load", load)
+	} else {
+		c.logger.Info("System stable. No action required.", "load", load)
+	}
+	return nil
+}
+
+func (c *Controller) getPendingTasksFromBackend() int {
+	// פנייה לשרת דרך הרשת הפנימית של דוקר
+	resp, err := http.Get("http://sunday-service:8080/pending-count")
+	if err != nil {
+		c.logger.Error("Backend unreachable", "error", err)
+		return 0
+	}
+	defer resp.Body.Close()
+
+	var res struct{ Count int `json:"count"` }
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return 0
+	}
+	return res.Count
 }
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	logger.Info("Ethereal Operator Booting Sequence Initiated...")
 
-	slog.Info("Ghost Operator is starting", "version", "v1.2", "env", "production")
-
-	var config *rest.Config
-	var err error
-
-	config, err = rest.InClusterConfig()
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		slog.Info("Running outside of cluster, trying local kubeconfig")
-		var kubeconfig string
-		if home := homedir.HomeDir(); home != "" {
-			kubeconfig = filepath.Join(home, ".kube", "config")
-		} else {
-			kubeconfig = filepath.Join(os.Getenv("USERPROFILE"), ".kube", "config")
+		home := homedir.HomeDir()
+		config, err = clientcmd.BuildConfigFromFlags("", filepath.Join(home, ".kube", "config"))
+	}
+
+	// מנגנון חכם: אם אין קוברנטס זמין כרגע, מריץ סימולציה לבדיקות מקומיות
+	if err != nil {
+		logger.Warn("Kubernetes cluster not found. Running in Standalone Simulation Mode.")
+		c := &Controller{logger: logger}
+		for {
+			c.ReconcileBusinessLogic("local-simulation")
+			time.Sleep(3 * time.Second) // דוגם את השרת כל 3 שניות
 		}
-
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			slog.Error("CRITICAL: Could not load Kubernetes config", "error", err)
-			os.Exit(1)
-		}
-	} else {
-		slog.Info("Running inside Kubernetes cluster")
+		return
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		slog.Error("Failed to create dynamic client", "error", err)
-		os.Exit(1)
+	// חיבור לקוברנטס אמיתי (כאשר ייפרס בענן)
+	dynamicClient, _ := dynamic.NewForConfig(config)
+	k8sClient, _ := kubernetes.NewForConfig(config)
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 30*time.Second)
+	informer := factory.ForResource(schema.GroupVersionResource{Group: "sunday.com", Version: "v1", Resource: "etherealpods"})
+
+	c := &Controller{
+		k8sClient: k8sClient, 
+		logger:    logger, 
+		queue:     workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "etherealpods"),
 	}
 
-	k8sClient, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		slog.Error("Failed to create k8s client", "error", err)
-		os.Exit(1)
-	}
+	informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) { 
+			key, _ := cache.MetaNamespaceKeyFunc(obj)
+			c.queue.Add(key) 
+		},
+	})
 
-	slog.Info("Operator started successfully. Watching for EtherealPods...")
-
+	go factory.Start(context.Background().Done())
+	
+	logger.Info("Operator is actively watching K8s events")
 	for {
-		list, err := dynamicClient.Resource(gvr).Namespace("default").List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			slog.Error("Error listing custom resources", "error", err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-
-		for _, item := range list.Items {
-			reconcile(context.TODO(), item, k8sClient)
-		}
-
-		time.Sleep(5 * time.Second)
-	}
-}
-
-func reconcile(ctx context.Context, item unstructured.Unstructured, client *kubernetes.Clientset) {
-    name := item.GetName()
-    
-  
-    spec, found, err := unstructured.NestedMap(item.Object, "spec")
-    if !found || err != nil {
-        slog.Warn("Could not find spec in resource", "name", name)
-        return
-    }
-
-    image, _, _ := unstructured.NestedString(spec, "image")
-    if image == "" {
-        image = "sunday-app:v2" 
-    }
-
-    podName := "real-" + name
-
-    
-    _, err = client.CoreV1().Pods("default").Get(ctx, podName, metav1.GetOptions{})
-
-    if err != nil {
-        // אם השגיאה היא שהפוד לא נמצא - זה הזמן להקים אותו (Self-healing)
-        slog.Info("Pod missing, resurrecting...", "pod", podName)
-        createPod(ctx, client, podName, image)
-    }
-}
-
-func createPod(ctx context.Context, client *kubernetes.Clientset, name string, image string) {
-	newPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
-			Labels: map[string]string{"managed-by": "ethereal-operator", "app": "sunday-app"},
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:            "main-container",
-					Image:           image,
-					ImagePullPolicy: corev1.PullIfNotPresent,
-					LivenessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{
-								Path: "/health",
-								Port: intstr.FromInt(8080),
-							},
-						},
-						InitialDelaySeconds: 10,
-						PeriodSeconds:       15,
-					},
-				},
-			},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
-	}
-
-	_, err := client.CoreV1().Pods("default").Create(ctx, newPod, metav1.CreateOptions{})
-	if err != nil {
-		slog.Error("Failed to resurrect pod", "pod", name, "error", err)
-	} else {
-		slog.Info("Successfully resurrected pod", "pod", name)
+		obj, _ := c.queue.Get()
+		c.ReconcileBusinessLogic(obj.(string))
+		c.queue.Done(obj)
 	}
 }

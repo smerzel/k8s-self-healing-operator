@@ -28,6 +28,19 @@ roleRef:
   name: ethereal-operator-role
   apiGroup: rbac.authorization.k8s.io
 ---
+# זה ה-Service שפותר לנו את בעיית התקשורת
+apiVersion: v1
+kind: Service
+metadata:
+  name: sunday-service
+spec:
+  selector:
+    app: sunday-app
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

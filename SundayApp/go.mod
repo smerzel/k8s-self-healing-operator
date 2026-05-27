@@ -1,7 +1,6 @@
-module sunday-app
+module SundayApp
 
-go 1.25.5
-
+go 1.24
 require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/glebarez/go-sqlite v1.21.2
@@ -45,3 +44,5 @@ require (
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/sqlite v1.23.1 // indirect
 )
+
+replace SundayApp => ./

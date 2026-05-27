@@ -1,0 +1,34 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ethereal-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: ethereal-operator
+  template:
+    metadata:
+      labels:
+        name: ethereal-operator
+    spec:
+      serviceAccountName: ethereal-operator-sa
+      containers:
+        - name: operator
+          image: ethereal-operator:latest
+          imagePullPolicy: Never
+---
+# זה ה-Service שחיבר את האופרטור ל-Backend
+apiVersion: v1
+kind: Service
+metadata:
+  name: sunday-service
+spec:
+  selector:
+    # וודאי שה-Label של הפוד של ה-SundayApp הוא app: sunday-app
+    app: sunday-app 
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
