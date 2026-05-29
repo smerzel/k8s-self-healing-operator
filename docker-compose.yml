@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  # שרת הבקאנד שלנו
+  sunday-service:
+    build: ./SundayApp
+    ports:
+      - "8080:8080"
+
+  # האופרטור שדוגם את השרת
+  ethereal-operator:
+    build: ./EtherealOperator
+    depends_on:
+      - sunday-service
