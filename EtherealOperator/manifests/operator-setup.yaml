@@ -58,5 +58,4 @@ spec:
       serviceAccountName: ethereal-operator-sa
       containers:
         - name: operator
-          image: ethereal-operator:latest
-          imagePullPolicy: Never
+          image: saramerzel/ethereal-operator:latest
