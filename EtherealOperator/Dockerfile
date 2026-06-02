@@ -1,6 +1,7 @@
 # שלב 1: בנייה
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
+# שנה את השורה הראשונה ל:
+    FROM golang:1.24-alpine AS builder
+    WORKDIR /app
 COPY . .
 
 

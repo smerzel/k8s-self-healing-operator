@@ -12,31 +12,24 @@ help:
 
 build:
 	@echo "Building SundayApp Docker image..."
-	docker build -t sunday-app:latest ./SundayApp
+	docker build -t saramerzel/sunday-app:latest ./SundayApp
 	@echo "Building EtherealOperator Docker image..."
-	docker build -t ethereal-operator:latest ./EtherealOperator
+	docker build -t saramerzel/ethereal-operator:latest ./EtherealOperator
 
 deploy:
-	@echo "Applying Custom Resource Definitions (CRDs)..."
-	kubectl apply -f EtherealOperator/manifests/crd.yaml
-	@echo "Deploying SundayApp Backend..."
-	kubectl apply -f EtherealOperator/manifests/deployment.yaml
-	@echo "Deploying Ethereal Operator with RBAC..."
-	kubectl apply -f EtherealOperator/manifests/operator-setup.yaml
-	@echo "Instantiating Custom Resource (EtherealPod)..."
-	kubectl apply -f EtherealOperator/manifests/my-ghost.yaml
-	@echo "Deployment complete! Run 'kubectl get pods' to view resources."
+	@echo "Deploying all numbered manifests to the K8s Cluster..."
+	# התיקון: החלפת הפקודות הבודדות בפקודה אחת שקוראת את כל התיקייה לפי סדר אלפביתי
+	kubectl apply -f EtherealOperator/manifests/
 
 run:
 	@echo "Running EtherealOperator locally in standalone mode..."
 	cd EtherealOperator && go run main.go
 
 logs:
+	# התיקון: התאמת הלייבל החיפוש ללייבל הנכון של האופרטור בקובץ 04
 	kubectl logs -f -l name=ethereal-operator
 
 clean:
 	@echo "Tearing down the environment..."
-	kubectl delete -f EtherealOperator/manifests/my-ghost.yaml --ignore-not-found
-	kubectl delete -f EtherealOperator/manifests/operator-setup.yaml --ignore-not-found
-	kubectl delete -f EtherealOperator/manifests/deployment.yaml --ignore-not-found
-	kubectl delete -f EtherealOperator/manifests/crd.yaml --ignore-not-found
+	# התיקון: מחיקה נקייה של כל המשאבים שהוגדרו בתיקיית המניפסטים
+	kubectl delete -f EtherealOperator/manifests/ --ignore-not-found

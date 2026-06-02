@@ -1,6 +1,7 @@
 # Stage 1: Build
-FROM golang:1.24-alpine AS builder
-WORKDIR /app
+# שנה את השורה הראשונה ל:
+    FROM golang:1.24-alpine AS builder
+    WORKDIR /app
 
 # מעתיקים את כל הקבצים, כולל תיקיית ה-vendor
 COPY . .

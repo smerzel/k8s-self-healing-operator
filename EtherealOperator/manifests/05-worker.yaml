@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sunday-worker
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sunday-worker
+  template:
+    metadata:
+      labels:
+        app: sunday-worker
+    spec:
+      containers:
+        - name: worker
+          image: saramerzel/sunday-worker:latest
+          imagePullPolicy: IfNotPresent

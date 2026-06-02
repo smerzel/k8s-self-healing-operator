@@ -1,43 +1,33 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/glebarez/go-sqlite"
+	"github.com/redis/go-redis/v9"
 
 	"SundayApp/internal/repository"
 )
 
 func main() {
-	// פתיחת חיבור למסד הנתונים
-	db, err := sql.Open("sqlite", "./sunday.db")
-	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
-	}
-	defer db.Close()
+	// אתחול שכבת הנתונים - חיבור ישיר לתור ה-Redis בקלאסטר
+	repo := repository.NewRedisRepo("redis-service:6379")
+	defer repo.Close()
 
-	// התיקון: יצירת הטבלה אם היא לא קיימת
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS items (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user TEXT,
-		product TEXT,
-		amount INTEGER,
-		status TEXT
-	)`)
-	if err != nil {
-		log.Fatal("Failed to initialize database table:", err)
-	}
-
-	// אתחול שכבת הנתונים
-	repo := repository.NewSQLiteRepo(db)
+	// לקוח Redis ייעודי עבור מנגנון ה-Pub/Sub (שידור אירועים לאופרטור)
+	redisClient := redis.NewClient(&redis.Options{Addr: "redis-service:6379"})
+	defer redisClient.Close()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// ראוט האופרטור - סופר משימות ממתינות
+	// ראוט האופרטור - סופר משימות ממתינות ישירות מתוך התור
 	r.GET("/pending-count", func(c *gin.Context) {
 		count, err := repo.GetPendingTasksCount(c.Request.Context())
 		if err != nil {
@@ -47,7 +37,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"count": count})
 	})
 
-	// ראוט הזרקת הנתונים - מקבל משימות ושומר ל-DB
+	// ראוט הזרקת הנתונים - מקבל משימות ודוחף אותן לתור (Producer)
 	r.POST("/tasks", func(c *gin.Context) {
 		var task repository.Task
 
@@ -56,12 +46,16 @@ func main() {
 			return
 		}
 
-		if err := repo.SaveTask(c.Request.Context(), task); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		// דחיפה לתור (PushTask) כדי שהפועלים יבצעו את העבודה
+		if err := repo.PushTask(c.Request.Context(), task); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to push task to Redis queue"})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"status": "Task saved successfully and is pending"})
+		// ארכיטקטורת Push טהורה: שידור אירוע לערוץ כדי להעיר את האופרטור מידית
+		redisClient.Publish(c.Request.Context(), "task_events", "new_task")
+
+		c.JSON(http.StatusOK, gin.H{"status": "Task pushed to queue successfully"})
 	})
 
 	r.GET("/readiness", func(c *gin.Context) {
@@ -72,5 +66,27 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
 	})
 
-	r.Run(":8080")
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: r,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	log.Println("Server exiting gracefully")
 }

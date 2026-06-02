@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ethereal-operator
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: ethereal-operator
+  template:
+    metadata:
+      labels:
+        name: ethereal-operator
+    spec:
+      serviceAccountName: ethereal-operator-sa
+      containers:
+        - name: operator
+          image: saramerzel/ethereal-operator:latest
+          imagePullPolicy: IfNotPresent
