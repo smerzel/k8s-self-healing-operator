@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/workqueue"
+	"k8s.io/client-go/util/workqueue" // <--- הנתיב המתוקן נמצא כאן
 )
 
 type Controller struct {
@@ -61,7 +61,6 @@ func main() {
 		queue:       workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "etherealpods"),
 	}
 
-	// הגדרת ה-Informer לשינויים ב-Deployments
 	factory := informers.NewSharedInformerFactory(k8sClient, time.Minute*10)
 	deploymentInformer := factory.Apps().V1().Deployments().Informer()
 
@@ -74,7 +73,6 @@ func main() {
 	stopCh := make(chan struct{})
 	factory.Start(stopCh)
 	
-	// האזנה לאירועי Redis
 	pubsub := c.redisClient.Subscribe(context.Background(), "task_events")
 	go func() {
 		for range pubsub.Channel() {
@@ -84,7 +82,6 @@ func main() {
 
 	logger.Info("Operator ready (Full Event-Driven Architecture)")
 
-	// לולאת עיבוד אירועים חכמה
 	go func() {
 		for {
 			obj, _ := c.queue.Get()
@@ -93,7 +90,6 @@ func main() {
 		}
 	}()
 
-	// ניהול סגירה תקינה (Graceful Shutdown)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
