@@ -1,43 +1,40 @@
-# Event-Driven Kubernetes Operator (Go)
+# ⚙️ Event-Driven Go Backend & Custom K8s Controller
 
-This project showcases a custom-built Kubernetes Operator developed entirely in Go. It represents a shift from basic infrastructure scripts to a fully-fledged, event-driven backend system. 
+This repository showcases a distributed backend system and a custom Kubernetes controller, engineered entirely in **Go**. 
 
-Unlike standard "restart-on-crash" operators, this service actively monitors real-time business metrics from a target backend application and dynamically orchestrates the cluster state to handle fluctuating loads.
+The project demonstrates advanced software engineering concepts, shifting away from basic synchronous APIs to a highly concurrent, decoupled architecture. It implements a custom control-loop to programmatically manage its own scale via the Kubernetes API, rather than relying on standard out-of-the-box infrastructure scripts.
 
-## Architecture & Core Components
+## 💻 Software Architecture & Code Design
 
-1.  **SundayApp (Target Backend):**
-    * A RESTful API built with the **Gin** framework and backed by a **SQLite** database.
-    * Acts as a task-queue manager, processing incoming jobs and exposing a critical metrics endpoint (/pending-count) that reflects the system's current load.
+The system is divided into three primary Go microservices:
 
-2.  **EtherealOperator (The Core Controller):**
-    * The "brain" of the operation, utilizing K8s native libraries (client-go, dynamicClient, Informers, Workqueues).
-    * **Proactive Auto-Scaling:** It continuously queries SundayApp for pending tasks. 
-        * **Scale UP:** If the pending task queue exceeds 15, the operator uses the K8s API to horizontally scale the backend (increasing Replicas to 3).
-        * **Scale DOWN:** Once the queue drops below 5, it scales down to 1 Replica to optimize resources.
-    * **Simulation Mode:** The operator is designed for high developer velocity; it can run entirely outside a cluster (Standalone/Simulation Mode) to test business logic quickly.
+### 1. Message-Driven Ingress API (Go / Gin)
+- **Decoupling:** Receives incoming requests and immediately pushes payloads to a **Redis** message broker. 
+- **Performance:** This event-driven design ensures the API remains completely unblocked and highly responsive, delegating heavy processing to the background.
 
-## Quick Start (Local Development)
+### 2. Asynchronous Worker Pool (Go)
+- **Concurrency:** Background processes utilizing Go's concurrency model to continuously poll and consume tasks from the Redis queue.
+- **Stateless Processing:** Workers handle business logic asynchronously, allowing for seamless horizontal scaling.
 
-This project includes a smart Makefile to simplify the build and deployment process. Ensure you have Docker and a local K8s environment (like Minikube/MicroK8s) running.
+### 3. Algorithmic K8s Controller
+- **K8s Native Engineering:** Programmed from scratch using the official `k8s.io/client-go` library, `dynamicClient`, and Informers.
+- **Reconciliation Loop:** A continuous Go routine that queries system metrics and programmatically compares the current state (pending queue size) against desired thresholds.
+- **Autonomous Scaling:** Makes direct K8s API calls to dynamically provision or terminate worker Pods based on real-time load.
 
-1.  **Build the Docker Images:**
-   
-bash
-    make build
-   
-2.  **Deploy Everything to the Cluster:**
-    (This deploys the CRDs, the SundayApp Backend, and the Operator with required RBAC)
-   
-bash
-    make deploy
-   
-3.  **View Live Operator Logs:**
-   
-bash
-    make logs
-   
-4.  **Tear Down the Environment:**
-   
-bash
-    make clean
+## ☁️ Cloud-Native Deployment
+To prove the architecture in a real-world environment, the complete microservices stack is deployed on a cloud-based **Azure Linux VM (IaaS)** running **MicroK8s**. This setup validates the system's ability to handle concurrent workloads and internal network communication in a production-like setting.
+
+## 🛠️ Tech Stack
+- **Core Languages:** Go (Golang)
+- **Engineering Concepts:** Distributed Systems, Decoupling, Asynchronous Processing, Operator Pattern
+- **Libraries:** `client-go` (Kubernetes Go SDK), Gin Web Framework
+- **Databases & Brokers:** Redis, SQLite
+- **Infrastructure:** Azure IaaS, MicroK8s, Docker
+
+## 🚀 Developer Quick Start
+
+A `Makefile` automates the build and deployment pipeline for rapid local testing.
+
+**1. Compile & Build Docker Images:**
+```bash
+make build
